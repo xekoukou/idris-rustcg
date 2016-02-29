@@ -73,10 +73,10 @@ codegenRust :: CodeGenerator
 codegenRust ci = do putStrLn $ codegenRust' $ Map.fromList (liftDecls ci)
 
 codegenRust' :: Map Name LDecl -> String
-codegenRust' m = let rm = findMain m 
-                 in let Just decl = Map.lookup (snd $ rm) m 
+codegenRust' m = let nm = (sMN 0 "runMain") 
+                 in let Just decl = Map.lookup nm m 
 		    in let (LFun _ _ _ fn) = decl
-                       in  concat (map genLDecl $ [fst rm] ++ [(snd $ rm, decl)] ++ (Map.toList $ eraseVarFun $ Map.fromList $ fst $ findLDecl fn m Set.empty))
+                       in  concat (map genLDecl $ Map.toList $ eraseVarFun $ Map.fromList $ (nm,decl) : (fst $ findLDecl fn m Set.empty))
 
 
 
@@ -166,31 +166,38 @@ filterLN x = filterLN' 0 x where
                        in case (y) of
                          LNothing -> (nle, p:q)
                          _        -> (y:nle, q)
+  filterLN' p [] = ([],[])
 
-removeLNothing :: LExp -> (LExp, Set (Name,[Int]))
-removeLNothing (LApp j1 vr lexps) = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (le:lle,  Set.unions [lq, q])) ([],Set.empty) (map removeLNothing lexps)
+removeLNothing :: LExp -> (LExp, Map Name [Int])
+removeLNothing (LApp j1 vr lexps) = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map removeLNothing lexps)
                                         in case (vr) of
-                                             LV (Glob n) -> let (rm, li) = filterLN lexps
-                                                            in ((LApp j1 vr nlexps),Set.unions [nq, case (li) of
-                                                                                                     [] -> Set.empty 
-                                                                                                     _  -> Set.insert (n,li) Set.empty])
+                                             LV (Glob n) -> let (rm, li) = filterLN nlexps
+                                                            in ((LApp j1 vr rm),Map.unions [nq, case (li) of
+                                                                                                     [] -> Map.empty 
+                                                                                                     _  -> Map.insert n li Map.empty])
                                              _           -> ((LApp j1 vr nlexps),nq)
-removeLNothing (LLazyApp n lexps) = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (le:lle,  Set.unions [lq, q])) ([],Set.empty) (map removeLNothing lexps)
-                                    in ((LLazyApp n nlexps),nq)
+removeLNothing (LLazyApp n lexps) = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map removeLNothing lexps)
+                                    in let (rm, li) = filterLN nlexps
+                                       in ((LLazyApp n rm),Map.unions [nq, case (li) of
+                                                                            [] -> Map.empty 
+                                                                            _  -> Map.insert n li Map.empty])
 removeLNothing (LLazyExp lexp)       = let (le,q) =  removeLNothing lexp
                                        in ((LLazyExp le), q)
 removeLNothing (LForce lexp)       = let (le,q) =  removeLNothing lexp
                                      in ((LForce le), q)
 removeLNothing (LLet j1 lexp1 lexp2) = let (le1,q1) =  removeLNothing lexp1
                                        in let (le2,q2) =  removeLNothing lexp2
-                                          in ((LLet j1 le1 le2), Set.unions [q1,q2])
+                                          in ((LLet j1 le1 le2), Map.unions [q1,q2])
 removeLNothing (LLam j1 lexp)      = let (le,q) =  removeLNothing lexp
                                      in ((LLam j1 lexp), q)
 removeLNothing (LProj lexp j1)      = let (le,q) =  removeLNothing lexp
                                       in ((LProj le j1), q)
-removeLNothing (LCon j1 j2 n lexps)  = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (le:lle,  Set.unions [lq, q])) ([],Set.empty) (map removeLNothing lexps)
-                                       in ((LCon j1 j2 n nlexps),nq)
-removeLNothing (LCase j1 lexp lalts) = let (nlalts,nq) = foldl (\(lle, lq) (le,q) -> (le:lle,  Set.unions [lq, q])) ([],Set.empty) (map (\x -> case (x) of 
+removeLNothing (LCon j1 j2 n lexps)  = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map removeLNothing lexps)
+                                       in let (rm, li) = filterLN nlexps
+                                          in ((LCon j1 j2 n rm),Map.unions [nq, case (li) of
+                                                                                  [] -> Map.empty 
+                                                                                  _  -> Map.insert n li Map.empty])
+removeLNothing (LCase j1 lexp lalts) = let (nlalts,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map (\x -> case (x) of 
                                                                                                                                              LDefaultCase lexp        -> let (le,q) = removeLNothing lexp
                                                                                                                                                                          in (LDefaultCase le,q)
                                                                                                                                              LConstCase j2 lexp    -> let (le,q) = removeLNothing lexp
@@ -198,13 +205,13 @@ removeLNothing (LCase j1 lexp lalts) = let (nlalts,nq) = foldl (\(lle, lq) (le,q
                                              	                                                                                             LConCase j3 j4 j5 lexp    -> let (le,q) = removeLNothing lexp
                                                                                                                                                                           in (LConCase j3 j4 j5 le,q)) lalts)
                                        in let (le,q) =  removeLNothing lexp
-                                          in ((LCase j1 le nlalts), Set.unions [q,nq])
-removeLNothing (LOp j1 lexps)  = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (le:lle,  Set.unions [lq, q])) ([],Set.empty) (map removeLNothing lexps)
+                                          in ((LCase j1 le nlalts), Map.unions [q,nq])
+removeLNothing (LOp j1 lexps)  = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map removeLNothing lexps)
                                  in ((LOp j1 nlexps),nq)
-removeLNothing (LForeign fd1 fd2 fds) = let (nfds,nq) = foldl (\(lle, lq) (le,q) -> (le:lle,  Set.unions [lq, q])) ([],Set.empty) (map (\x -> let (le,q) = removeLNothing (snd x) 
+removeLNothing (LForeign fd1 fd2 fds) = let (nfds,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map (\x -> let (le,q) = removeLNothing (snd x) 
                                                                                                                                           in ((fst x,le),q)) fds)
                                         in ((LForeign fd1 fd2 nfds),nq)
-removeLNothing le = (le,Set.empty)
+removeLNothing le = (le,Map.empty)
 
 cleanFun :: [(Name, [Int])] -> Map Name LDecl -> Map Name LDecl
 cleanFun ((n, li):xs) m = let Just (LFun j1 j2 nms j4) = Map.lookup n m
@@ -214,13 +221,14 @@ cleanFun ((n, li):xs) m = let Just (LFun j1 j2 nms j4) = Map.lookup n m
                                                                                                      in case (i==p) of
                                                                                                           True -> nnms
                                                                                                           False -> (n:nnms)
-                                                                         apFilter' p [] [] = []  
+                                                                         apFilter' p [] ns = ns 
+                                                                         apFilter' p li [] = []  -- why this is needed is beyond me.
 cleanFun [] m = m 
 
 
 eraseVarFun :: Map Name LDecl -> Map Name LDecl
-eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec nm, Set.unions [nq,q])) (Map.empty, Set.empty) (Map.toList (Map.map (\ldec -> case (ldec) of
+eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec nm, Map.unions [nq,q])) (Map.empty, Map.empty) (Map.toList (Map.map (\ldec -> case (ldec) of
                                                                                                                                                                 LFun j1 j2 j3 le -> let (nle,q) = removeLNothing le
                                                                                                                                                                                     in (LFun j1 j2 j3 nle, q)
-                                                                                                                                                                o                -> (o, Set.empty)                   )  m))   
-                in cleanFun (Set.toList q) nm
+                                                                                                                                                                o                -> (o, Map.empty)                   )  m))   
+                in cleanFun (Map.toList q) nm
