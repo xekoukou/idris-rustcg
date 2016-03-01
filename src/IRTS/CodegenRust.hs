@@ -10,12 +10,10 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
 
--- codegenRust :: CodeGenerator
--- codegenRust ci = do putStrLn $ codegenRust' (liftDecls ci)
--- 
--- codegenRust' :: [(Name, LDecl)] -> String
--- codegenRust' x = concat (map genLDecl x)
--- 
+
+
+
+
 tab :: Int -> String
 tab n = concat $ replicate (n*4) " "
 
@@ -220,7 +218,7 @@ cleanFun ((n, li):xs) m = let Just (LFun j1 j2 nms j4) = Map.lookup n m
                             in let ldec = ((LFun j1 j2 nnms j4))
                                in let (lrnms,nm) = cleanFun xs (Map.insert n ldec m) 
                                   in ((n,rnms):lrnms,nm)  where
-                                                                 apFilter li nms = trace ("name: " ++ show n ++ "\nli: " ++ show li ++ "\nnms: " ++ show nms ) $ apFilter' 0 li nms where
+                                                                 apFilter li nms = apFilter' 0 li nms where
                                                                            apFilter' p (i:ls) (n:ns) = let (rnms,nnms) = apFilter' (p+1) ls ns
                                                                                                        in case (i==p) of
                                                                                                             True -> (n:rnms,nnms)
