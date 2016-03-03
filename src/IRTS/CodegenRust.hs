@@ -8,6 +8,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Binary
 import Debug.Trace
 
 
@@ -213,18 +214,21 @@ removeArg arg (LForeign fd1 fd2 fds) = let (nfds,nq) = foldl (\(lle, lq) (le,q) 
 removeArg arg le = (le,Map.empty)
 
 cleanFun :: [(Name, [Int])] -> Map Name LDecl -> ([(Name,[Name])],Map Name LDecl)
-cleanFun ((n, li):xs) m = let Just (LFun j1 j2 nms j4) = Map.lookup n m
-                          in let (rnms,nnms) = apFilter li nms
-                            in let ldec = ((LFun j1 j2 nnms j4))
-                               in let (lrnms,nm) = cleanFun xs (Map.insert n ldec m) 
-                                  in ((n,rnms):lrnms,nm)  where
-                                                                 apFilter li nms = apFilter' 0 li nms where
-                                                                           apFilter' p (i:ls) (n:ns) = let (rnms,nnms) = apFilter' (p+1) ls ns
-                                                                                                       in case (i==p) of
-                                                                                                            True -> (n:rnms,nnms)
-                                                                                                            False -> (rnms,n:nnms)
-                                                                           apFilter' p [] ns = ([],ns) 
-                                                                           apFilter' p li [] = ([],[])  -- This is only needed because runMain has an LNothing but main does not have a variable.
+cleanFun ((n, li):xs) m = let lp = Map.lookup n m
+                          in case (lp) of
+                              Just (LFun j1 j2 nms j4)  ->     let (rnms,nnms) = apFilter li nms
+                                                               in let ldec = ((LFun j1 j2 nnms j4))
+                                                                  in let (lrnms,nm) = cleanFun xs (Map.insert n ldec m) 
+                                                                     in ((n,rnms):lrnms,nm)  where
+                                                                                               apFilter li nms = apFilter' 0 li nms where
+                                                                                                        apFilter' p (i:ls) (n:ns) = let (rnms,nnms) = apFilter' (p+1) ls ns
+                                                                                                                                    in case (i==p) of
+                                                                                                                                         True -> (n:rnms,nnms)
+                                                                                                                                         False -> (rnms,n:nnms)
+                                                                                                        apFilter' p [] ns = ([],ns) 
+                                                                                                        apFilter' p li [] = ([],[])  -- This is only needed because runMain has an LNothing but main does not have a variable.
+                              Just (LConstructor _ a t )   -> cleanFun xs (Map.insert n (LConstructor n (a - length li) t) m)
+                              _    -> trace (show n) ([],m)
 cleanFun [] m = ([],m) 
 
 
@@ -247,4 +251,107 @@ eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec
                          eraseVarFun' m []         = m
 
                                                              
+
+arithToConst :: ArithTy -> Const
+arithTyToConst ATFloat = Fl Double
+arithTyToConst ATInt ITNative = I Int
+arithTyToConst ATInt ITBig= BI Integer
+arithTyToConst ATInt ITChar= Ch Char
+arithTyToConst ATInt ITFixed IT8 = B8 Word8
+arithTyToConst ATInt ITFixed IT16 = B16 Word16
+arithTyToConst ATInt ITFixed IT32 = B32 Word32
+arithTyToConst ATInt ITFixed IT64 = B64 Word64
+
+primOpToConst :: PrimFn -> Const
+primOpToConst LPlus a = arithTyToConst a 
+primOpToConst LMinus a = arithTyToConst a 
+primOpToConst LTimes a = arithTyToConst a
+primOpToConst LUDiv a = arithTyToConst (ATInt a) 
+primOpToConst LSDiv a = arithTyToConst a 
+primOpToConst LURem a = arithTyToConst (ATInt a) 
+primOpToConst LSRem a = arithTyToConst a
+primOpToConst LAnd a = arithTyToConst (ATInt a) 
+primOpToConst LOr a = arithTyToConst (ATInt a) 
+primOpToConst LXOr a = arithTyToConst (ATInt a) 
+primOpToConst LCompl a = arithTyToConst (ATInt a)
+primOpToConst LSHL a = arithTyToConst (ATInt a) 
+primOpToConst LLSHR a = arithTyToConst (ATInt a) 
+primOpToConst LASHR a = arithTyToConst (ATInt a)
+primOpToConst LEq a = arithTyToConst a 
+primOpToConst LLt a = arithTyToConst (ATInt a) 
+primOpToConst LLe a = arithTyToConst (ATInt a) 
+primOpToConst LGt a = arithTyToConst (ATInt a) 
+primOpToConst LGe a = arithTyToConst (ATInt a)
+primOpToConst LSLt a = arithTyToConst a 
+primOpToConst LSLe a = arithTyToConst a 
+primOpToConst LSGt a = arithTyToConst a 
+primOpToConst LSGe a = arithTyToConst a
+--primOpToConst LSExt IntTy IntTy 
+--primOpToConst LZExt IntTy IntTy 
+--primOpToConst LTrunc IntTy IntTy
+--primOpToConst LStrConcat 
+--primOpToConst LStrLt 
+--primOpToConst LStrEq 
+--primOpToConst LStrLen
+primOpToConst LIntFloat a = arithTyToConst (ATInt a) 
+primOpToConst LFloatInt a = arithTyToConst (ATInt a) 
+primOpToConst LIntStr a = arithTyToConst (ATInt a) 
+primOpToConst LStrInt a = arithTyToConst (ATInt a)
+--primOpToConst LFloatStr 
+--primOpToConst LStrFloat 
+primOpToConst LChInt a = arithTyToConst (ATInt a) 
+primOpToConst LIntCh a = arithTyToConst (ATInt a)
+primOpToConst LBitCast a _ = arithTyToConst a 
+--primOpToConst LFExp 
+--primOpToConst LFLog 
+--primOpToConst LFSin 
+--primOpToConst LFCos 
+--primOpToConst LFTan 
+--primOpToConst LFASin 
+--primOpToConst LFACos 
+--primOpToConst LFATan
+--primOpToConst LFSqrt 
+--primOpToConst LFFloor 
+--primOpToConst LFCeil 
+--primOpToConst LFNegate
+--primOpToConst LStrHead 
+--primOpToConst LStrTail 
+--primOpToConst LStrCons 
+--primOpToConst LStrIndex 
+--primOpToConst LStrRev 
+--primOpToConst LStrSubstr
+--primOpToConst LReadStr 
+--primOpToConst LWriteStr
+--
+
+
+findVarTypes :: LExp -> [(Name,Name)]
+findVarTypes (LApp j1 vr lexps) = case (vr) of
+                                    LV (Glob n) -> foldl (\ns lexp -> case (lexp) of
+                                                                        LV (Glob nl) -> ns ++ [(n,nl)]
+                                                                        _            -> ns ++ findVarTypes lexp   ) [] lexps -- We need to find its type.
+                                    _           -> []  -- ?
+findVarTypes (LLazyApp n lexps) = foldl (\ns lexp -> case (lexp) of
+                                                                        LV (Glob nl) -> ns ++ [(n,nl)]
+                                                                        _            -> ns ++ findVarTypes lexp   ) [] lexps
+findVarTypes (LLazyExp lexp)       = findVarTypes lexp
+findVarTypes (LForce lexp)       = findVarTypes lexp
+findVarTypes (LLet j1 lexp1 lexp2) = let r1 =  findVarTypes lexp1
+                                       in let r2 =  findVarTypes lexp2
+                                          in r1 ++ r2
+findVarTypes (LLam j1 lexp)      = findVarTypes lexp
+findVarTypes (LProj lexp j1)      = findVarTypes lexp
+findVarTypes (LCon j1 j2 n lexps)  = foldl (\ns lexp -> case (lexp) of
+                                                                        LV (Glob nl) -> ns ++ [(n,nl)]
+                                                                        _            -> ns ++ findVarTypes lexp   ) [] lexps
+findVarTypes (LCase j1 lexp lalts) = let r1 = foldl (\ns x -> case (x) of 
+                                                           LDefaultCase lexp        -> ns ++ findVarTypes lexp
+                                                           LConstCase j2 lexp    -> ns ++ findVarTypes lexp
+                                             	           LConCase j3 j4 j5 lexp  -> ns ++ findVarTypes lexp ) [] lalts
+                                      in let r2 = findVarTypes lexp
+                                         in r1 ++ r2
+findVarTypes (LOp j1 lexps) = foldl (\ns lexp ->  ns ++ findVarTypes lexp ) [] lexps
+findVarTypes (LForeign fd1 fd2 fds) = foldl (\ns x -> ns ++ findVarTypes (snd x)) [] fds 
+findVarTypes le = []
+
 
