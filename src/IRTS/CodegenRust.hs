@@ -8,12 +8,23 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Binary
 import Debug.Trace
 
 
+-- This is the main function
+
+codegenRust :: CodeGenerator
+codegenRust ci = do putStrLn $ codegenRust' $ Map.fromList (liftDecls ci)
+
+codegenRust' :: Map Name LDecl -> String
+codegenRust' m = let nm = (sMN 0 "runMain") 
+                 in let Just decl = Map.lookup nm m 
+		    in let (LFun _ _ _ fn) = decl
+                       in  concat (map genLDecl $ Map.toList $ eraseVarFun $ Map.fromList $ (nm,decl) : (fst $ findLDecl fn m Set.empty))
 
 
+
+-- This section provides a method to print the LIR so as to inspect it.
 
 tab :: Int -> String
 tab n = concat $ replicate (n*4) " "
@@ -68,16 +79,6 @@ genLExp t LNothing = "LNothing"
 genLExp t (LError str) = "LError " ++ "'" ++ str ++ "'"
 
 -------------------------------------------------------
-
-codegenRust :: CodeGenerator
-codegenRust ci = do putStrLn $ codegenRust' $ Map.fromList (liftDecls ci)
-
-codegenRust' :: Map Name LDecl -> String
-codegenRust' m = let nm = (sMN 0 "runMain") 
-                 in let Just decl = Map.lookup nm m 
-		    in let (LFun _ _ _ fn) = decl
-                       in  concat (map genLDecl $ Map.toList $ eraseVarFun $ Map.fromList $ (nm,decl) : (fst $ findLDecl fn m Set.empty))
-
 
 
 
@@ -252,106 +253,71 @@ eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec
 
                                                              
 
-arithToConst :: ArithTy -> Const
-arithTyToConst ATFloat = Fl Double
-arithTyToConst ATInt ITNative = I Int
-arithTyToConst ATInt ITBig= BI Integer
-arithTyToConst ATInt ITChar= Ch Char
-arithTyToConst ATInt ITFixed IT8 = B8 Word8
-arithTyToConst ATInt ITFixed IT16 = B16 Word16
-arithTyToConst ATInt ITFixed IT32 = B32 Word32
-arithTyToConst ATInt ITFixed IT64 = B64 Word64
+---
+data FCName = Con Name Int | Fun Name Int | LzApp Name Int
+data VarRel = Leaf (FCName,Const) | Edge (FCName,Name)
 
-primOpToConst :: PrimFn -> Const
-primOpToConst LPlus a = arithTyToConst a 
-primOpToConst LMinus a = arithTyToConst a 
-primOpToConst LTimes a = arithTyToConst a
-primOpToConst LUDiv a = arithTyToConst (ATInt a) 
-primOpToConst LSDiv a = arithTyToConst a 
-primOpToConst LURem a = arithTyToConst (ATInt a) 
-primOpToConst LSRem a = arithTyToConst a
-primOpToConst LAnd a = arithTyToConst (ATInt a) 
-primOpToConst LOr a = arithTyToConst (ATInt a) 
-primOpToConst LXOr a = arithTyToConst (ATInt a) 
-primOpToConst LCompl a = arithTyToConst (ATInt a)
-primOpToConst LSHL a = arithTyToConst (ATInt a) 
-primOpToConst LLSHR a = arithTyToConst (ATInt a) 
-primOpToConst LASHR a = arithTyToConst (ATInt a)
-primOpToConst LEq a = arithTyToConst a 
-primOpToConst LLt a = arithTyToConst (ATInt a) 
-primOpToConst LLe a = arithTyToConst (ATInt a) 
-primOpToConst LGt a = arithTyToConst (ATInt a) 
-primOpToConst LGe a = arithTyToConst (ATInt a)
-primOpToConst LSLt a = arithTyToConst a 
-primOpToConst LSLe a = arithTyToConst a 
-primOpToConst LSGt a = arithTyToConst a 
-primOpToConst LSGe a = arithTyToConst a
---primOpToConst LSExt IntTy IntTy 
---primOpToConst LZExt IntTy IntTy 
---primOpToConst LTrunc IntTy IntTy
---primOpToConst LStrConcat 
---primOpToConst LStrLt 
---primOpToConst LStrEq 
---primOpToConst LStrLen
-primOpToConst LIntFloat a = arithTyToConst (ATInt a) 
-primOpToConst LFloatInt a = arithTyToConst (ATInt a) 
-primOpToConst LIntStr a = arithTyToConst (ATInt a) 
-primOpToConst LStrInt a = arithTyToConst (ATInt a)
---primOpToConst LFloatStr 
---primOpToConst LStrFloat 
-primOpToConst LChInt a = arithTyToConst (ATInt a) 
-primOpToConst LIntCh a = arithTyToConst (ATInt a)
-primOpToConst LBitCast a _ = arithTyToConst a 
---primOpToConst LFExp 
---primOpToConst LFLog 
---primOpToConst LFSin 
---primOpToConst LFCos 
---primOpToConst LFTan 
---primOpToConst LFASin 
---primOpToConst LFACos 
---primOpToConst LFATan
---primOpToConst LFSqrt 
---primOpToConst LFFloor 
---primOpToConst LFCeil 
---primOpToConst LFNegate
---primOpToConst LStrHead 
---primOpToConst LStrTail 
---primOpToConst LStrCons 
---primOpToConst LStrIndex 
---primOpToConst LStrRev 
---primOpToConst LStrSubstr
---primOpToConst LReadStr 
---primOpToConst LWriteStr
---
-
-
-findVarTypes :: LExp -> [(Name,Name)]
-findVarTypes (LApp j1 vr lexps) = case (vr) of
-                                    LV (Glob n) -> foldl (\ns lexp -> case (lexp) of
-                                                                        LV (Glob nl) -> ns ++ [(n,nl)]
-                                                                        _            -> ns ++ findVarTypes lexp   ) [] lexps -- We need to find its type.
+findVarRel :: LExp -> [VarRel]
+findVarRel (LApp j1 vr lexps) = case (vr) of
+                                    LV (Glob n) -> fst $ foldl (\(ns,p) lexp -> case (lexp) of
+                                                                                 LV (Glob nl) -> (ns ++ [Edge (Fun n p,nl)], p+1)
+                                                                                 LConst c     -> (ns ++ [Leaf (Fun n p,c)], p+1)
+                                                                                 _            -> (ns ++ findVarRel lexp, p+1)   ) ([],0) lexps
                                     _           -> []  -- ?
-findVarTypes (LLazyApp n lexps) = foldl (\ns lexp -> case (lexp) of
-                                                                        LV (Glob nl) -> ns ++ [(n,nl)]
-                                                                        _            -> ns ++ findVarTypes lexp   ) [] lexps
-findVarTypes (LLazyExp lexp)       = findVarTypes lexp
-findVarTypes (LForce lexp)       = findVarTypes lexp
-findVarTypes (LLet j1 lexp1 lexp2) = let r1 =  findVarTypes lexp1
-                                       in let r2 =  findVarTypes lexp2
-                                          in r1 ++ r2
-findVarTypes (LLam j1 lexp)      = findVarTypes lexp
-findVarTypes (LProj lexp j1)      = findVarTypes lexp
-findVarTypes (LCon j1 j2 n lexps)  = foldl (\ns lexp -> case (lexp) of
-                                                                        LV (Glob nl) -> ns ++ [(n,nl)]
-                                                                        _            -> ns ++ findVarTypes lexp   ) [] lexps
-findVarTypes (LCase j1 lexp lalts) = let r1 = foldl (\ns x -> case (x) of 
-                                                           LDefaultCase lexp        -> ns ++ findVarTypes lexp
-                                                           LConstCase j2 lexp    -> ns ++ findVarTypes lexp
-                                             	           LConCase j3 j4 j5 lexp  -> ns ++ findVarTypes lexp ) [] lalts
-                                      in let r2 = findVarTypes lexp
+findVarRel (LLazyApp n lexps) = fst $ foldl (\(ns,p) lexp -> case (lexp) of
+                                                                        LV (Glob nl) -> (ns ++ [Edge (LzApp n p,nl)], p+1)
+                                                                        LConst c     -> (ns ++ [Leaf (LzApp n p,c)], p+1)
+                                                                        _            -> (ns ++ findVarRel lexp, p+1)   ) ([],0) lexps
+findVarRel (LLazyExp lexp)               = findVarRel lexp
+findVarRel (LForce lexp)                 = findVarRel lexp
+findVarRel (LLet j1 lexp1 lexp2)         = let r1 =  findVarRel lexp1
+                                           in let r2 =  findVarRel lexp2
+                                              in r1 ++ r2
+findVarRel (LLam j1 lexp)                = findVarRel lexp
+findVarRel (LProj lexp j1)               = findVarRel lexp   -- What is Projection? probably lexp is a constructor.
+findVarRel (LCon j1 j2 n lexps)  = fst $ foldl (\(ns,p) lexp -> case (lexp) of
+                                                                        LV (Glob nl) -> (ns ++ [Edge (Con n p,nl)],p+1)
+                                                                        LConst c     -> (ns ++ [Leaf (Con n p,c)],p+1)
+                                                                        _            -> (ns ++ findVarRel lexp,p+1)   ) ([],0) lexps
+findVarRel (LCase j1 lexp lalts) = let r1 = foldl (\ns x -> case (x) of 
+                                                           LDefaultCase lexp        -> ns ++ findVarRel lexp
+                                                           LConstCase j2 lexp    -> ns ++ findVarRel lexp
+                                             	           LConCase j3 j4 j5 lexp  -> ns ++ findVarRel lexp ) [] lalts
+                                      in let r2 = findVarRel lexp
                                          in r1 ++ r2
-findVarTypes (LOp j1 lexps) = foldl (\ns lexp ->  ns ++ findVarTypes lexp ) [] lexps
-findVarTypes (LForeign fd1 fd2 fds) = foldl (\ns x -> ns ++ findVarTypes (snd x)) [] fds 
-findVarTypes le = []
+findVarRel (LOp j1 lexps) = foldl (\ns lexp ->  ns ++ findVarRel lexp ) [] lexps
+findVarRel (LForeign fd1 fd2 fds) = foldl (\ns x -> ns ++ findVarRel (snd x)) [] fds 
+findVarRel _ = []
 
 
+data RLExp = Top | Parent RLExp LExp
+
+reverseLExp :: RLExp -> LExp -> [RLExp]
+reverseLExp r (LApp j1 vr lexps) = let par = (Parent r (LApp j1 vr [LNothing]))
+                                   in foldl (++) [] (map (reverseLExp par) lexps)
+reverseLExp r (LLazyApp n lexps) = let par = Parent r (LLazyApp n [LNothing])
+                                   in foldl (++) [] (map (reverseLExp par) lexps)
+reverseLExp r (LLazyExp lexp)               = reverseLExp (Parent r (LLazyExp LNothing)) lexp
+reverseLExp r (LForce lexp)                 = reverseLExp (Parent r (LForce LNothing)) lexp
+reverseLExp r (LLet j1 lexp1 lexp2)         = let r1 =  reverseLExp (Parent r (LLet j1 LNothing LNothing)) lexp1
+                                              in let r2 =   reverseLExp (Parent r (LLet j1 LNothing LNothing)) lexp2
+                                                 in r1 ++ r2
+reverseLExp r (LLam j1 lexp)                = reverseLExp (Parent r (LLam j1 LNothing)) lexp
+reverseLExp r (LProj lexp j1)               = reverseLExp (Parent r (LProj LNothing j1)) lexp   -- What is Projection? probably lexp is a constructor.
+reverseLExp r (LCon j1 j2 n lexps)  = let par = Parent r (LCon j1 j2 n [LNothing])
+                                      in foldl (++) [] (map (reverseLExp par) lexps)
+reverseLExp r (LCase j1 lexp lalts) = foldl (\ns x -> case (x) of 
+                                                           LDefaultCase lexp        -> let par = Parent r (LCase j1 LNothing (LDefaultCase LNothing))
+                                                                                       in ns ++ reverseLExp par lexp
+                                                           LConstCase j2 lexp    -> let par = Parent r (LCase j1 LNothing (LConstCase j2 LNothing))
+                                                                                       in ns ++ reverseLExp par lexp
+                                             	           LConCase j3 j4 j5 lexp  -> let par = Parent r (LCase j1 LNothing (LConCase j3 j4 j5 LNothing))
+                                                                                       in ns ++ reverseLExp par lexp ) [] lalts
+reverseLExp r (LOp j1 lexps) = let par = (Parent r (LOp j1 [LNothing]))
+                               in foldl (++) [] (map (reverseLExp par) lexps)
+reverseLExp r (LForeign fd1 fd2 fds) = let par = (Parent r (LForeign fd1 fd2 (map (\(x,y) -> (x,LNothing)) fds)))
+                                       in foldl (++) [] (map (reverseLExp par) (map snd fds))
+reverseLExp r _ = []
+
+
+--findOutNoApp :: LExp -> Const

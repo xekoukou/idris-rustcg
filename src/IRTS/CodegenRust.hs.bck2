@@ -1,0 +1,60 @@
+module IRTS.CodegenRust(codegenRust) where
+
+import IRTS.CodegenCommon
+import IRTS.Lang
+import Idris.Core.TT
+import Data.Map (Map)
+import qualified Data.Map as Map
+
+codegenRust :: CodeGenerator
+codegenRust ci = do putStrLn $ codegenRust' $ Map.fromList (liftDecls ci)
+
+
+genLFun :: LDecl -> Map Name LDecl -> String
+genLFun (LFun opts _ args lexp) m = show args
+
+findMain :: Map Name LDecl -> (Name,[LExp])
+findMain m = let mf = Map.lookup (sMN 0 "runMain") m
+             in case mf of
+                  Just f -> let LFun _ _ args (LForce (LApp _ (LV (Glob n)) lexps)) = f
+		            in (n,lexps)
+
+
+findLApp :: LExp -> Map Name LDecl -> [Name]
+findLApp (LApp _ vr lexps) m = case (vr) of 
+                                            (LV (Glob n)) -> let ldec = Map.lookup n m
+                                                             in case (ldec) of
+				                                  Just (LFun _ _ _ fn) -> [n] ++ (findLApp fn m) ++ foldl (++) [] (map (\x -> findLApp x m) lexps)
+			                                          Nothing              -> []
+			                                          _                    -> []
+					    (LV (Loc n))  -> foldl (++) [] (map (\x -> findLApp x m) lexps)
+					    _             -> findLApp vr m
+findLApp (LLazyApp n lexps) m = let ldec = Map.lookup n m
+                                in case (ldec) of
+				Just (LFun _ _ _ fn) -> [n] ++ (findLApp fn m) ++ foldl (++) [] (map (\x -> findLApp x m) lexps)
+			        Nothing              -> []
+			        _                    -> []
+findLApp (LForce lexp) m        = findLApp lexp m
+findLApp (LLet _ lexp1 lexp2) m = (findLApp lexp1 m) ++ (findLApp lexp2 m)
+findLApp (LLam _ lexp) m        = findLApp lexp m
+findLApp (LProj lexp _) m       = findLApp lexp m
+findLApp (LCase _ lexp lalts) m = (findLApp lexp m) ++ foldl (++) [] (map (\lalt -> case (lalt) of
+                                                                                      LDefaultCase lexp        -> findLApp lexp m
+                                                                                      LConstCase _ lexp    -> findLApp lexp m
+										      LConCase _ _ _ lexp      -> findLApp lexp m  ) lalts)
+findLApp (LOp _ lexps) m   = foldl (++) [] (map (\x -> findLApp x m) lexps)
+findLApp _ _                    = []
+
+
+codegenRust' :: Map Name LDecl -> String
+codegenRust' m = let Just (LFun _ _ _ fn) = Map.lookup (fst $ findMain m)  m
+                 in show $ findLApp fn m
+
+--codegenRust' m = let mf = Map.lookup (sMN 0 "runMain") m
+--                 in case mf of
+--		      Just f -> genLFun f m
+--
+
+
+
+
