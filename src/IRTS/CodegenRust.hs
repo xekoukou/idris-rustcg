@@ -80,14 +80,7 @@ genLExp t (LError str) = "LError " ++ "'" ++ str ++ "'"
 
 -------------------------------------------------------
 
-
-
-findMain :: Map Name LDecl -> ((Name,LDecl),Name)
-findMain m = let mf = Map.lookup (sMN 0 "runMain") m
-             in case mf of
-                  Just f -> let LFun _ _ args (LForce (LApp _ (LV (Glob n)) _)) = f
-		            in ((sMN 0 "runMain",f), n)
-
+-- This sections removes any anecessary declarations LDecl
 
 amap :: (a -> Set Name -> ([b],Set Name)) -> [a] -> Set Name -> ([b],Set Name)
 amap f (y : ys) q = let (r,nq) = f y q
@@ -160,6 +153,8 @@ findLDecl _ _ q                   = ([],q)
 
 
 -------------------------------------------------------
+
+-- This section removes the LNothing arguments. TODO It needs to be fixed. It cannot clean functions that are passed as arguments. ??
 
 filterLN :: LExp -> [LExp] -> ([LExp], [Int])
 filterLN arg x = filterLN' 0 arg x where
@@ -253,36 +248,43 @@ eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec
 
                                                              
 
----
-data FCName = Con Name Int | Fun Name Int | LzApp Name Int
-data VarRel = Leaf (FCName,Const) | Edge (FCName,Name)
+---------------------------------------------------------
+
+-- It creates the tree of dependencies of variables and finds their type.
+
+
+-- First int of Con is its tag.
+data FCName = Con Name Int Int | App Name Int | LzApp Name Int | Let Name | Case
+
+-- Here the relation is that of equality
+data VarRel = Leaf (FCName,Const) | Edge (FCName,Name) | Res (FCName, LExp)
 
 findVarRel :: LExp -> [VarRel]
 findVarRel (LApp j1 vr lexps) = case (vr) of
                                     LV (Glob n) -> fst $ foldl (\(ns,p) lexp -> case (lexp) of
-                                                                                 LV (Glob nl) -> (ns ++ [Edge (Fun n p,nl)], p+1)
-                                                                                 LConst c     -> (ns ++ [Leaf (Fun n p,c)], p+1)
-                                                                                 _            -> (ns ++ findVarRel lexp, p+1)   ) ([],0) lexps
+                                                                                 LV (Glob nl) -> (ns ++ [Edge (App n p,nl)], p+1)
+                                                                                 LConst c     -> (ns ++ [Leaf (App n p,c)], p+1)
+                                                                                 _            -> (ns ++ [Res (App n p,lexp)] ++ findVarRel lexp, p+1)   ) ([],0) lexps
                                     _           -> []  -- ?
 findVarRel (LLazyApp n lexps) = fst $ foldl (\(ns,p) lexp -> case (lexp) of
                                                                         LV (Glob nl) -> (ns ++ [Edge (LzApp n p,nl)], p+1)
                                                                         LConst c     -> (ns ++ [Leaf (LzApp n p,c)], p+1)
-                                                                        _            -> (ns ++ findVarRel lexp, p+1)   ) ([],0) lexps
+                                                                        _            -> (ns ++ [Res (LzApp n p,lexp)] ++ findVarRel lexp, p+1)   ) ([],0) lexps
 findVarRel (LLazyExp lexp)               = findVarRel lexp
 findVarRel (LForce lexp)                 = findVarRel lexp
 findVarRel (LLet j1 lexp1 lexp2)         = let r1 =  findVarRel lexp1
                                            in let r2 =  findVarRel lexp2
-                                              in r1 ++ r2
+                                              in r1 ++ r2 ++ [Res (Let j1,LExp)]
 findVarRel (LLam j1 lexp)                = findVarRel lexp
 findVarRel (LProj lexp j1)               = findVarRel lexp   -- What is Projection? probably lexp is a constructor.
-findVarRel (LCon j1 j2 n lexps)  = fst $ foldl (\(ns,p) lexp -> case (lexp) of
-                                                                        LV (Glob nl) -> (ns ++ [Edge (Con n p,nl)],p+1)
-                                                                        LConst c     -> (ns ++ [Leaf (Con n p,c)],p+1)
-                                                                        _            -> (ns ++ findVarRel lexp,p+1)   ) ([],0) lexps
+findVarRel (LCon j1 tag n lexps)  = fst $ foldl (\(ns,p) lexp -> case (lexp) of
+                                                                        LV (Glob nl) -> (ns ++ [Edge (Con n tag p,nl)],p+1)
+                                                                        LConst c     -> (ns ++ [Leaf (Con n tag p,c)],p+1)
+                                                                        _            -> (ns ++ [Res (Con n tag p, lExp)] ++ findVarRel lexp,p+1)   ) ([],0) lexps
 findVarRel (LCase j1 lexp lalts) = let r1 = foldl (\ns x -> case (x) of 
-                                                           LDefaultCase lexp        -> ns ++ findVarRel lexp
-                                                           LConstCase j2 lexp    -> ns ++ findVarRel lexp
-                                             	           LConCase j3 j4 j5 lexp  -> ns ++ findVarRel lexp ) [] lalts
+                                                           LDefaultCase clexp        -> ns ++ findVarRel clexp
+                                                           LConstCase cnst clexp    -> ns ++ findVarRel clexp
+                                             	           LConCase tag nm args clexp  -> ns ++ [Res ()] ++ findVarRel clexp ) [] lalts
                                       in let r2 = findVarRel lexp
                                          in r1 ++ r2
 findVarRel (LOp j1 lexps) = foldl (\ns lexp ->  ns ++ findVarRel lexp ) [] lexps
@@ -307,11 +309,11 @@ reverseLExp r (LProj lexp j1)               = reverseLExp (Parent r (LProj LNoth
 reverseLExp r (LCon j1 j2 n lexps)  = let par = Parent r (LCon j1 j2 n [LNothing])
                                       in foldl (++) [] (map (reverseLExp par) lexps)
 reverseLExp r (LCase j1 lexp lalts) = foldl (\ns x -> case (x) of 
-                                                           LDefaultCase lexp        -> let par = Parent r (LCase j1 LNothing (LDefaultCase LNothing))
+                                                           LDefaultCase lexp        -> let par = Parent r (LCase j1 LNothing [LDefaultCase LNothing])
                                                                                        in ns ++ reverseLExp par lexp
-                                                           LConstCase j2 lexp    -> let par = Parent r (LCase j1 LNothing (LConstCase j2 LNothing))
+                                                           LConstCase j2 lexp    -> let par = Parent r (LCase j1 LNothing [LConstCase j2 LNothing])
                                                                                        in ns ++ reverseLExp par lexp
-                                             	           LConCase j3 j4 j5 lexp  -> let par = Parent r (LCase j1 LNothing (LConCase j3 j4 j5 LNothing))
+                                             	           LConCase j3 j4 j5 lexp  -> let par = Parent r (LCase j1 LNothing [LConCase j3 j4 j5 LNothing])
                                                                                        in ns ++ reverseLExp par lexp ) [] lalts
 reverseLExp r (LOp j1 lexps) = let par = (Parent r (LOp j1 [LNothing]))
                                in foldl (++) [] (map (reverseLExp par) lexps)
