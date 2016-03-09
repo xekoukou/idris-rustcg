@@ -254,42 +254,44 @@ eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec
 
 
 -- First int of Con is its tag.
-data FCName = Con Name Int Int | App Name Int | LzApp Name Int | Let Name | Case
+data FCName = Con Name Int Int | SApp Name Int | LzApp Name Int | FCLet Name | CaseCon Name Int [Name]
 
 -- Here the relation is that of equality
 data VarRel = Leaf (FCName,Const) | Edge (FCName,Name) | Res (FCName, LExp)
 
-findVarRel :: LExp -> [VarRel]
-findVarRel (LApp j1 vr lexps) = case (vr) of
+
+-- The bool is true if LExp is part of LCase. LCase's LExp is the only one whose order of execution cannot be derived from the data flow dependencies.
+findVarRel :: Bool -> LExp -> [VarRel]
+findVarRel isCase (LApp j1 vr lexps) = case (vr) of
                                     LV (Glob n) -> fst $ foldl (\(ns,p) lexp -> case (lexp) of
-                                                                                 LV (Glob nl) -> (ns ++ [Edge (App n p,nl)], p+1)
-                                                                                 LConst c     -> (ns ++ [Leaf (App n p,c)], p+1)
-                                                                                 _            -> (ns ++ [Res (App n p,lexp)] ++ findVarRel lexp, p+1)   ) ([],0) lexps
+                                                                                 LV (Glob nl) -> (ns ++ [Edge (SApp n p,nl)], p+1)
+                                                                                 LConst c     -> (ns ++ [Leaf (SApp n p,c)], p+1)
+                                                                                 _            -> (ns ++ [Res (SApp n p,lexp)] ++ findVarRel isCase lexp, p+1)   ) ([],0) lexps
                                     _           -> []  -- ?
-findVarRel (LLazyApp n lexps) = fst $ foldl (\(ns,p) lexp -> case (lexp) of
+findVarRel isCase (LLazyApp n lexps) = fst $ foldl (\(ns,p) lexp -> case (lexp) of
                                                                         LV (Glob nl) -> (ns ++ [Edge (LzApp n p,nl)], p+1)
                                                                         LConst c     -> (ns ++ [Leaf (LzApp n p,c)], p+1)
-                                                                        _            -> (ns ++ [Res (LzApp n p,lexp)] ++ findVarRel lexp, p+1)   ) ([],0) lexps
-findVarRel (LLazyExp lexp)               = findVarRel lexp
-findVarRel (LForce lexp)                 = findVarRel lexp
-findVarRel (LLet j1 lexp1 lexp2)         = let r1 =  findVarRel lexp1
-                                           in let r2 =  findVarRel lexp2
-                                              in r1 ++ r2 ++ [Res (Let j1,LExp)]
-findVarRel (LLam j1 lexp)                = findVarRel lexp
-findVarRel (LProj lexp j1)               = findVarRel lexp   -- What is Projection? probably lexp is a constructor.
-findVarRel (LCon j1 tag n lexps)  = fst $ foldl (\(ns,p) lexp -> case (lexp) of
+                                                                        _            -> (ns ++ [Res (LzApp n p,lexp)] ++ findVarRel isCase lexp, p+1)   ) ([],0) lexps
+findVarRel isCase (LLazyExp lexp)               = findVarRel isCase lexp
+findVarRel isCase (LForce lexp)                 = findVarRel isCase lexp
+findVarRel isCase (LLet j1 lexp1 lexp2)         = let r1 =  findVarRel isCase lexp1
+                                           in let r2 =  findVarRel isCase lexp2
+                                              in r1 ++ r2 ++ [Res (FCLet j1,lexp1)]
+findVarRel isCase (LLam j1 lexp)                = findVarRel isCase lexp  -- TODO ?
+findVarRel isCase (LProj lexp j1)               = findVarRel isCase lexp   -- What is Projection? probably lexp is a constructor.
+findVarRel isCase (LCon j1 tag n lexps)  = fst $ foldl (\(ns,p) lexp -> case (lexp) of
                                                                         LV (Glob nl) -> (ns ++ [Edge (Con n tag p,nl)],p+1)
                                                                         LConst c     -> (ns ++ [Leaf (Con n tag p,c)],p+1)
-                                                                        _            -> (ns ++ [Res (Con n tag p, lExp)] ++ findVarRel lexp,p+1)   ) ([],0) lexps
-findVarRel (LCase j1 lexp lalts) = let r1 = foldl (\ns x -> case (x) of 
-                                                           LDefaultCase clexp        -> ns ++ findVarRel clexp
-                                                           LConstCase cnst clexp    -> ns ++ findVarRel clexp
-                                             	           LConCase tag nm args clexp  -> ns ++ [Res ()] ++ findVarRel clexp ) [] lalts
-                                      in let r2 = findVarRel lexp
+                                                                        _            -> (ns ++ [Res (Con n tag p, lexp)] ++ findVarRel isCase lexp,p+1)   ) ([],0) lexps
+findVarRel isCase (LCase j1 lexp lalts) = let r1 = foldl (\ns x -> case (x) of 
+                                                           LDefaultCase clexp        -> ns ++ findVarRel isCase clexp
+                                                           LConstCase cnst clexp    -> ns ++ findVarRel isCase clexp
+                                             	           LConCase tag nm args clexp  -> ns ++ [Res (CaseCon nm tag args,lexp)] ++ findVarRel isCase clexp ) [] lalts
+                                      in let r2 = findVarRel True lexp
                                          in r1 ++ r2
-findVarRel (LOp j1 lexps) = foldl (\ns lexp ->  ns ++ findVarRel lexp ) [] lexps
-findVarRel (LForeign fd1 fd2 fds) = foldl (\ns x -> ns ++ findVarRel (snd x)) [] fds 
-findVarRel _ = []
+findVarRel isCase (LOp j1 lexps) = foldl (\ns lexp ->  ns ++ findVarRel isCase lexp ) [] lexps
+findVarRel isCase (LForeign fd1 fd2 fds) = foldl (\ns x -> ns ++ findVarRel isCase (snd x)) [] fds 
+findVarRel isCase _ = []
 
 
 data RLExp = Top | Parent RLExp LExp
