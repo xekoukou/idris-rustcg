@@ -1,0 +1,3 @@
+We assume in an EdgeR that there will be an appication in the remaining LExp. That might not be the case, thus creating multiple problems.
+
+We need to put an assertion that nun > unl
