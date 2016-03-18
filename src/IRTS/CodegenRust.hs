@@ -291,28 +291,17 @@ findVarel un (LCon j1 tag n lexps)  = fst $ foldl (\(((ns,unl),rls),p) lexp -> c
                                                                                         in (((ns ++ [EdgeR (Con nun n tag p, ui_inc unl)] ++ res,nun),nrls ++ rls),p+1)   ) ((([],ui_inc un),[]),0) lexps
 findVarel un (LCase j1 lexp lalts) = let ((r,nun),rls) = findVarel un lexp
                                      in ((r,nun),rls ++ [LCase j1 lexp lalts])
-
--- This peice of code needs to be removed to the new function that deals with this.
-
---                                          let ((r1,nun1),ncn1) = findVarel un lexp
---                                          in let ((r2,nun2),ncn2) = foldl (\((ns,un) x -> case (x) of 
---                                                                       LDefaultCase clexp        -> let ((res,nun),ncn) = findVarel un clexp
---                                                                                                    in ((ns ++ res,nun),ncn)
---                                                                       LConstCasest clexp    -> let ((res,nun),ncn) = findVarel un clexp
---                                                                                                   in ((ns ++ res,nun),ncn)
---                                              	                      LConCase tag nm args clexp  -> let ((res,nun),ncn) = findVarel un clexp 
---                                                                                                      in (((ns ++ [Res (CaseCon nm tag args,lexp)] ++ res),nun),ncn) ) (([],nun1),ncn1 + 1) lalts
---                                             in ((r1 ++ r2,nun2),ncn2)
-
-
-findVarel un (LOp j1 lexps) = foldl (\((ns,unl),rls) lexp -> let ((res,nun),nrls) = findVarel unl lexp 
-                                                              in ((ns ++ res,nun),nrls ++ rls)           ) (([],un),[]) lexps
+findVarel un (LOp j1 lexps) = fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
+                                                                          LV (Glob nl) -> (((ns ++ [Edge (PrimOp un j1 p,nl)],unl),rls), p+1)
+                                                                          LConst c     -> (((ns ++ [Leaf (PrimOp un j1 p,c)], unl),rls), p+1)
+                                                                          _            -> let ((res,nun),nrls) = findVarel unl lexp -- The order of execution here is important for EdgeR (un+1)
+                                                                                          in (((ns ++ [EdgeR (PrimOp un j1 p,ui_inc unl )] ++ res,nun),nrls ++ rls), p+1)   ) ((([],ui_inc un),[]),0) lexps
 findVarel un (LForeign fd1 fd2 fds) = foldl (\((ns,unl),rls) x -> let ((res,nun),nrls) = findVarel unl (snd x) 
                                                                    in ((ns ++ res,nun),nrls ++ rls)  ) (([],un),[]) fds 
 findVarel un _ = (([],un),[])
 
 
-
+---------------------------
 
 findFunCalls :: Name -> LExp -> [FunCall]
 findFunCalls n z = findFunCalls' n (UnId 1) z where
@@ -331,6 +320,13 @@ findFunCalls n z = findFunCalls' n (UnId 1) z where
 
   findFunCalls' n un lexp =  let ((vr,nun),nlexps) = findVarel un lexp
                              in foldl (\fcs lexp -> fcs ++ (findFunCalls' n nun lexp) ) [Fun n vr] nlexps
+
+
+
+findAllFunCalls :: Map Name LDecl -> [FunCall]
+findAllFunCalls  m = Map.foldlWithKey (\fcs n ldecl -> case (ldecl) of
+                                        LFun j1 j2 j3 lexp -> fcs ++ (findFunCalls n lexp)
+                                        _                  -> fcs                         ) [] m
 
 
 
