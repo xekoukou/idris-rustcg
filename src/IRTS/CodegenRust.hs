@@ -322,6 +322,13 @@ findAllFunCalls  m = Map.foldlWithKey (\fcs n ldecl -> case (ldecl) of
 
 
 
+
+
+
+
+
+
+
 -- First int fo Con SApp and LzApp is used to distinguish between application of the same name inside the same function.
 -- First int of Con is its tag.
 --newtype ExOrder = ExOrd [(Int)]

@@ -5,3 +5,6 @@ A) We assume in an EdgeR that there will be an appication in the remaining LExp.
 
 
 B) LForce might exist without the existence of an LLazyApp
+
+
+C) Remove the unnecessary LForces LLazyApps in case of functions that return a Lazy type.
