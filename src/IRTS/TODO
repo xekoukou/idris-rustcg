@@ -1,3 +1,7 @@
-We assume in an EdgeR that there will be an appication in the remaining LExp. That might not be the case, thus creating multiple problems.
+A) We assume in an EdgeR that there will be an appication in the remaining LExp. That might not be the case, thus creating multiple problems.
+   We need to put an assertion that nun > unl
 
-We need to put an assertion that nun > unl
+   This is probably not possible.
+
+
+B) LForce might exist without the existence of an LLazyApp

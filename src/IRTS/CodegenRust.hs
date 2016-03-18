@@ -249,7 +249,7 @@ newtype UniqueId = UnId Int
 ui_inc :: UniqueId -> UniqueId
 ui_inc (UnId x) = UnId (x+1)
 
-data OperInfo = Con UniqueId Name Int Int | SApp UniqueId Name Int | LzApp UniqueId Name Int | OLet Name | CaseCon UniqueId Name Int [Name] | PrimOp UniqueId PrimFn Int
+data OperInfo = Con UniqueId Name Int Int | SApp UniqueId Name Int | LzApp UniqueId Name Int | OLet Name | CaseCon UniqueId Name Int [Name] | PrimOp UniqueId PrimFn Int | OLForce UniqueId
 
 data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId)   
 
@@ -261,7 +261,7 @@ findVarel un (LApp j1 vr lexps) = case (vr) of
                                LV (Glob n) -> fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
                                                                             LV (Glob nl) -> (((ns ++ [Edge (SApp un n p,nl)],unl),rls), p+1)
                                                                             LConst c     -> (((ns ++ [Leaf (SApp un n p,c)], unl),rls), p+1)
-                                                                            _            -> let ((res,nun),nrls) = findVarel unl lexp -- The order of execution here is important for EdgeR (un+1)
+                                                                            _            -> let ((res,nun),nrls) = findVarel unl lexp    -- The order of execution here is important for EdgeR (un+1)
                                                                                             in (((ns ++ [EdgeR (SApp un n p,ui_inc unl )] ++ res,nun),nrls ++ rls), p+1)   ) ((([],ui_inc un),[]),0) lexps
                                _           -> (([],un),[])  -- ?
 findVarel un (LLazyApp n lexps) = fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
@@ -269,8 +269,12 @@ findVarel un (LLazyApp n lexps) = fst $ foldl (\(((ns,unl),rls),p) lexp -> case 
                                                                             LConst c     -> (((ns ++ [Leaf (LzApp un n p,c)], unl),rls), p+1)
                                                                             _            -> let ((res,nun),nrls) = findVarel unl lexp
                                                                                             in (((ns ++ [EdgeR (LzApp un n p,ui_inc unl)] ++ res,nun),rls ++ nrls), p+1)   ) ((([],ui_inc un),[]),0) lexps
-findVarel un (LForce lexp)                 = findVarel un lexp -- We will probably need to keep track of this.
-findVarel un (LLet j1 lexp1 lexp2)         = let ((r1,nun1),rls1) =  findVarel un lexp1 -- The order of execution here is important for EdgeR (un+1)
+findVarel un (LForce lexp) = case (lexp) of
+                                 LV (Glob nl) -> (([Edge (OLForce un,nl)],ui_inc un),[])
+                                 LConst c     -> (([Leaf (OLForce un,c)], ui_inc un),[])
+                                 _            -> let ((res,nun),nrls) = findVarel (ui_inc un) lexp 
+                                                 in (( EdgeR (OLForce un, ui_inc un) : res,nun),nrls)
+findVarel un (LLet j1 lexp1 lexp2)         = let ((r1,nun1),rls1) =  findVarel un lexp1    -- The order of execution here is important for EdgeR (un+1)
                                                     in let ((r2,nun2),rls2) =  findVarel nun1 lexp2
                                                        in ((r1 ++ r2 ++ [EdgeR (OLet j1,ui_inc un)],nun2),rls1 ++ rls2)
 findVarel un (LProj lexp j1)               = findVarel un lexp   -- What is Projection? probably lexp is a constructor.
