@@ -62,10 +62,8 @@ genLExp :: Int -> LExp -> String
 genLExp t (LV v) = "LV " ++ show v
 genLExp t (LApp b e1 e2) = "LApp " ++ show b ++ " " ++ "\n" ++ tab t ++ genLExp (t+1) e1 ++ " " ++ "[ \n" ++ tab t ++  (foldr (addNewLine t) "" $ map (genLExp (t+1)) e2) ++ " ]"
 genLExp t (LLazyApp n e1) = "LLazyApp " ++ show n ++ " " ++ "[ \n" ++ tab t ++ (foldr (addNewLine t) "" $ map (genLExp (t+1)) e1) ++ " ]"
-genLExp t (LLazyExp e1) = "LLazyExp " ++ "\n" ++ tab t ++ genLExp (t+1) e1
 genLExp t (LForce e1) = "LForce " ++ "\n" ++ tab t ++ genLExp (t+1) e1
 genLExp t (LLet n e1 e2) = "LLet " ++ show n ++ " " ++ "\n" ++ tab t ++ genLExp (t+1) e1 ++ " " ++ "\n" ++ tab t ++ genLExp (t+1) e2
-genLExp t (LLam args e1 ) = "LLam " ++ " [ " ++ (foldr addSpace "" $ map show args) ++ " ] " ++ "\n" ++ tab t ++ genLExp (t+1) e1
 genLExp t (LProj e1 pr) = "LProj " ++ "\n" ++ tab t ++ genLExp (t+1) e1 ++ " " ++ show pr
 genLExp t (LCon Nothing i n e) = "LCon " ++ "(Rel: Nothing )" ++ show i ++ " " ++ show n ++ " " ++ "[ \n" ++ tab t ++ (foldr (addNewLine t) "" $ map (genLExp (t+1)) e) ++ " ]"
 genLExp t (LCon (Just a) i n e) = "Lcon " ++ "(Rel: Just " ++ show a ++ ") " ++ show i ++ " " ++ show n ++ " " ++ "[ " ++ (foldr addSpace "" $ map (genLExp (t+1)) e) ++ " ]"
@@ -124,12 +122,10 @@ findLDecl (LLazyApp n lexps) m q = let e = Set.member n q
 							         in ([(n,ldec)] ++ fst res1 ++ fst res2, snd res2)
 			                         Nothing              -> amap (\x q -> findLDecl x m q) lexps q
 				    True  -> amap (\x q -> findLDecl x m q) lexps q
-findLDecl (LLazyExp lexp) m q       = findLDecl lexp m q
 findLDecl (LForce lexp) m q       = findLDecl lexp m q
 findLDecl (LLet _ lexp1 lexp2) m q = let res1 = findLDecl lexp1 m q
                                      in let res2 = findLDecl lexp2 m (snd res1)
 				     in (fst res1 ++ fst res2, snd res2)
-findLDecl (LLam _ lexp) m q       = findLDecl lexp m q
 findLDecl (LProj lexp _) m q      = findLDecl lexp m q
 findLDecl (LCon _ _ n lexps) m q  = let e = Set.member n q
                                 in case (e) of
@@ -177,15 +173,11 @@ removeArg arg (LLazyApp n lexps) = let (nlexps,nq) = foldl (\(lle, lq) (le,q) ->
                                        in ((LLazyApp n rm),Map.unions [nq, case (li) of
                                                                             [] -> Map.empty 
                                                                             _  -> Map.insert n li Map.empty])
-removeArg arg (LLazyExp lexp)       = let (le,q) =  removeArg arg lexp
-                                       in ((LLazyExp le), q)
 removeArg arg (LForce lexp)       = let (le,q) =  removeArg arg lexp
                                      in ((LForce le), q)
 removeArg arg (LLet j1 lexp1 lexp2) = let (le1,q1) =  removeArg arg lexp1
                                        in let (le2,q2) =  removeArg arg lexp2
                                           in ((LLet j1 le1 le2), Map.unions [q1,q2])
-removeArg arg (LLam j1 lexp)      = let (le,q) =  removeArg arg lexp
-                                     in ((LLam j1 lexp), q)
 removeArg arg (LProj lexp j1)      = let (le,q) =  removeArg arg lexp
                                       in ((LProj le j1), q)
 removeArg arg (LCon j1 j2 n lexps)  = let (nlexps,nq) = foldl (\(lle, lq) (le,q) -> (lle ++ [le],  Map.unions [lq, q])) ([],Map.empty) (map (removeArg arg) lexps)
@@ -261,7 +253,7 @@ data OperInfo = Con UniqueId Name Int Int | SApp UniqueId Name Int | LzApp Uniqu
 
 data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId)   
 
-data FunCall = Fun Name [VarRel] | FunCase Name UniqueId [[VarRel]] | FunLzLExp Name UniqueId [VarRel]
+data FunCall = Fun Name [VarRel] | FunCase Name UniqueId [[VarRel]]
 
 
 findVarel :: UniqueId -> LExp -> (([VarRel],UniqueId),[LExp])
@@ -277,12 +269,10 @@ findVarel un (LLazyApp n lexps) = fst $ foldl (\(((ns,unl),rls),p) lexp -> case 
                                                                             LConst c     -> (((ns ++ [Leaf (LzApp un n p,c)], unl),rls), p+1)
                                                                             _            -> let ((res,nun),nrls) = findVarel unl lexp
                                                                                             in (((ns ++ [EdgeR (LzApp un n p,ui_inc unl)] ++ res,nun),rls ++ nrls), p+1)   ) ((([],ui_inc un),[]),0) lexps
-findVarel un (LLazyExp lexp)               = (([],un),[LLazyExp lexp]) -- This is probably accompanied by a lets expression, otherwise it would be useless.
 findVarel un (LForce lexp)                 = findVarel un lexp -- We will probably need to keep track of this.
 findVarel un (LLet j1 lexp1 lexp2)         = let ((r1,nun1),rls1) =  findVarel un lexp1 -- The order of execution here is important for EdgeR (un+1)
                                                     in let ((r2,nun2),rls2) =  findVarel nun1 lexp2
                                                        in ((r1 ++ r2 ++ [EdgeR (OLet j1,ui_inc un)],nun2),rls1 ++ rls2)
-findVarel un (LLam j1 lexp)                = findVarel un lexp  -- TODO ?
 findVarel un (LProj lexp j1)               = findVarel un lexp   -- What is Projection? probably lexp is a constructor.
 findVarel un (LCon j1 tag n lexps)  = fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
                                                                         LV (Glob nl) -> (((ns ++ [Edge (Con un n tag p,nl)],unl),rls),p+1)
@@ -313,11 +303,6 @@ findFunCalls n z = findFunCalls' n (UnId 1) z where
                                         	                     LConCase tag nm args clexp  -> let ((res,nun),nrls) = findVarel unl clexp 
                                                                                                     in ((((res ++ [EdgeR (CaseCon un nm tag args,ui_inc unl)]):vrs),nun),rls ++ nrls) ) (([],ui_inc un),[]) lalts
                                           in foldl (\fcs lexp -> fcs ++ (findFunCalls' n nun lexp) ) [FunCase n un vrs] nlexps
-  findFunCalls' n un (LLazyExp lexp) = let ((vr,nun),nlexps) = findVarel (ui_inc un) lexp
-                                       in foldl (\fcs lexp -> fcs ++ (findFunCalls' n nun lexp) ) [FunLzLExp n un vr] nlexps
-
-
-
   findFunCalls' n un lexp =  let ((vr,nun),nlexps) = findVarel un lexp
                              in foldl (\fcs lexp -> fcs ++ (findFunCalls' n nun lexp) ) [Fun n vr] nlexps
 
@@ -363,7 +348,6 @@ findAllFunCalls  m = Map.foldlWithKey (\fcs n ldecl -> case (ldecl) of
 -- findVarel un cn (LLet j1 lexp1 lexp2)         = let ((r1,nun1),ncn1) =  findVarel un cn lexp1
 --                                                     in let ((r2,nun2),ncn2) =  findVarel nun1 ncn1 lexp2
 --                                                        in ((r1 ++ r2 ++ [Res (FCLet j1,lexp1)],nun2),ncn2)
--- findVarel un cn (LLam j1 lexp)                = findVarel un cn lexp  -- TODO ?
 -- findVarel un cn (LProj lexp j1)               = findVarel un cn lexp   -- What is Projection? probably lexp is a constructor.
 -- findVarel un cn (LCon j1 tag n lexps)  = fst $ foldl (\(((ns,un),cn),p) lexp -> case (lexp) of
 --                                                                         LV (Glob nl) -> (((ns ++ [Edge (Con un n tag p,nl)],un + 1),cn),p+1)
@@ -396,7 +380,6 @@ findAllFunCalls  m = Map.foldlWithKey (\fcs n ldecl -> case (ldecl) of
 -- findTypes (LLazyExp lexp)       = findTypes lexp
 -- findTypes (LForce lexp)       = findTypes lexp
 -- findTypes (LLet _ lexp1 lexp2) = let res1 = findTypes lexp1
--- findTypes (LLam _ lexp)       = findTypes lexp
 -- findTypes (LProj lexp _)      = findTypes lexp
 -- findTypes (LCon _ _ n lexps)  = let e = Set.member n q
 -- findTypes (LCase _ lexp lalts) = let res1 = findTypes lexp
@@ -418,7 +401,6 @@ findAllFunCalls  m = Map.foldlWithKey (\fcs n ldecl -> case (ldecl) of
 -- reverseLExp r (LLet j1 lexp1 lexp2)         = let r1 =  reverseLExp (Parent r (LLet j1 LNothing LNothing)) lexp1
 --                                               in let r2 =   reverseLExp (Parent r (LLet j1 LNothing LNothing)) lexp2
 --                                                  in r1 ++ r2
--- reverseLExp r (LLam j1 lexp)                = reverseLExp (Parent r (LLam j1 LNothing)) lexp
 -- reverseLExp r (LProj lexp j1)               = reverseLExp (Parent r (LProj LNothing j1)) lexp   -- What is Projection? probably lexp is a constructor.
 -- reverseLExp r (LCon j1 j2 n lexps)  = let par = Parent r (LCon j1 j2 n [LNothing])
 --                                       in foldl (++) [] (map (reverseLExp par) lexps)
