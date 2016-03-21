@@ -8,3 +8,7 @@ B) LForce might exist without the existence of an LLazyApp
 
 
 C) Remove the unnecessary LForces LLazyApps in case of functions that return a Lazy type.
+
+
+D) DO not transform returned functions into their result. Simply push the closure into a higher function and pass a pointer to the function that will create the closure.
+
