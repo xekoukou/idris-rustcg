@@ -249,9 +249,10 @@ newtype UniqueId = UnId Int
 ui_inc :: UniqueId -> UniqueId
 ui_inc (UnId x) = UnId (x+1)
 
+-- CaseR UniqueId is used so as to get the result of the Case application, mostly for the cases that it is a LDefaultCase or LConstCase 
 data OperInfo = Con UniqueId Name Int Int | SApp UniqueId Name Int | LzApp UniqueId Name Int | OLet UniqueId Name | CaseCon UniqueId Name Int [Name] | PrimOp UniqueId PrimFn Int | OLForce UniqueId
 
-data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId)   
+data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId) | CaseR UniqueId
 
 data FunCall = Fun Name [VarRel] | FunCase Name UniqueId [[VarRel]]
 
@@ -287,8 +288,8 @@ findVarel un (LCon j1 tag n lexps)  = fst $ foldl (\(((ns,unl),rls),p) lexp -> c
                                                                         LConst c     -> (((ns ++ [Leaf (Con un n tag p,c)], unl),rls),p+1)
                                                                         _            -> let ((res,nun),nrls) = findVarel unl lexp 
                                                                                         in (((ns ++ [EdgeR (Con nun n tag p, ui_inc unl)] ++ res,nun),nrls ++ rls),p+1)   ) ((([],ui_inc un),[]),0) lexps
-findVarel un (LCase j1 lexp lalts) = let ((r',nun'),rls') = findVarel un lexp
-                                     in let ((r,nun),rls) = ((r',nun'),rls' ++ [LCase j1 lexp lalts])
+findVarel un (LCase j1 lexp lalts) = let ((r',nun'),rls') = findVarel (ui_inc un) lexp
+                                     in let ((r,nun),rls) = ((r' ++ [CaseR un] ,nun'),rls' ++ [LCase j1 lexp lalts])
                                         in foldl (\((ns,unl),rls) x -> case (x) of 
                                                                      LDefaultCase _        -> ((ns,unl),rls)
                                                                      LConstCase _ _        -> ((ns,unl),rls)
@@ -313,7 +314,7 @@ findFunCalls n z = findFunCalls' n (UnId 1) z where
                                                                      LConstCase cnst clexp    -> let ((res,nun),nrls) = findVarel unl clexp
                                                                                               in ((res : vrs,nun),rls ++ nrls)
                                         	                     LConCase tag nm args clexp  -> let ((res,nun),nrls) = findVarel unl clexp 
-                                                                                                    in ((((res ++ [EdgeR (CaseCon un nm tag args,ui_inc unl)]):vrs),nun),rls ++ nrls) ) (([],ui_inc un),[]) lalts
+                                                                                                    in ((res : vrs,nun),rls ++ nrls) ) (([],ui_inc un),[]) lalts
                                           in foldl (\fcs lexp -> fcs ++ (findFunCalls' n nun lexp) ) [FunCase n un vrs] nlexps
   findFunCalls' n un lexp =  let ((vr,nun),nlexps) = findVarel un lexp
                              in foldl (\fcs lexp -> fcs ++ (findFunCalls' n nun lexp) ) [Fun n vr] nlexps
@@ -336,3 +337,6 @@ positionToNames m = Map.foldlWithKey (\nm k ldecl -> case (ldecl) of
 
 
 data FNode = FCon Name Int Int | FFun Name Name
+
+
+
