@@ -244,12 +244,12 @@ eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec
 
 -- It creates the tree of dependencies of variables and finds their type.
 
-newtype UniqueId = UnId Int
+data UniqueId = UnId Int | World
 
 ui_inc :: UniqueId -> UniqueId
 ui_inc (UnId x) = UnId (x+1)
 
--- CaseR UniqueId is used so as to get the result of the Case application, mostly for the cases that it is a LDefaultCase or LConstCase 
+-- CaseR UniqueId is used so as to get the result of the Case application, mostly for the cases that it is an LDefaultCase or LConstCase 
 data OperInfo = Con UniqueId Name Int Int | SApp UniqueId Name Int | LzApp UniqueId Name Int | OLet UniqueId Name | CaseCon UniqueId Name Int [Name] | PrimOp UniqueId PrimFn Int | OLForce UniqueId
 
 data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId) | CaseR UniqueId
@@ -334,12 +334,55 @@ findAllFunCalls  m = Map.foldlWithKey (\fcs n ldecl -> case (ldecl) of
 
 positionToNames :: Map Name LDecl -> Map Name (Map Int Name)
 positionToNames m = Map.foldlWithKey (\nm k ldecl -> case (ldecl) of 
-        LFun _ _ args _  -> Map.insert k ( fst $ foldl (\(nm,p) n ->  (Map.insert p n nm, p + 1)) (Map.empty,0) args ) nm 
+        LFun _ _ args _  -> Map.insert k ( fst $ foldl (\(nnm,p) n ->  (Map.insert p n nnm, p + 1)) (Map.empty,0) args ) nm 
+        _                -> nm ) Map.empty m
+
+namesToPositions :: Map Name LDecl -> Map Name (Map Name Int)
+namesToPositions m = Map.foldlWithKey (\nm k ldecl -> case (ldecl) of 
+        LFun _ _ args _  -> Map.insert k ( fst $ foldl (\(nnm,p) n ->  (Map.insert n p nnm, p + 1)) (Map.empty,0) args ) nm 
         _                -> nm ) Map.empty m
 
 
+---------
 
-data FNode = FCon Name Int Int | FFun Name Name
+-- Find all variables that are constructed through OLet or CasseCon, we will use this to construct the data flow graph.
+
+findBindings :: [FunCall] -> Map (Name,Name) VarRel
+findBindings (fc : fcs) = let (n,vrl) = case (fc) of
+                                  Fun n' vrl' -> (n,vrl')
+                                  FunCase n' ui vrls' -> (n', foldl (\nl el -> nl ++ el) [] vrls')
+                          in Map.unions [(iterVarRel Map.empty n vrl), (findBindings fcs)]  where
+                              iterVarRel m n  (x : xs) = let nm = case (x) of
+                                                               Leaf (OLet _ ln, _) -> Map.insert (n,ln) x m
+                                                               Edge (OLet _ ln, _) -> Map.insert (n,ln) x m
+                                                               EdgeR (OLet _ ln, _) -> Map.insert (n,ln) x m
+                                                               Leaf (CaseCon _ _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) x nm) m lns
+                                                               Edge (CaseCon _ _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) x nm) m lns
+                                                               EdgeR (CaseCon _ _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) x nm) m lns
+                                                               _     -> m
+                                                         in iterVarRel nm n xs
+                              iterVarRel m n [] = m
+findBindings []  = Map.empty
+                                 
+
+------------
+-- A node in the graph data flow in which the context is saved into the node itself.
+
+data GNode = GFun Name VarRel | GFunCase Name UniqueId VarRel
+
+-- createDataFlowGraph :: [FunCall] -> Map (Name,UniqueId) GNode
+-- createDataFlowGraph ((Fun n vrls) : xs) = Map.union [createDataFlowGraph xs, flatten n vrls ] where
+--                                             flatten n (v : vs) =case (v) of
+--                                                  Con ui _ _ _ -> (GFun n v)
+--                                                  SApp ui _ _ ->
+--                                                  LzApp ui _ _ ->
+--                                                  OLet ui _ _ ->
+--                                                  CaseCon ui _ _ _ ->
+--                                                  PrimOp ui _ _ ->
+--                                                  OLForce ui ->
+-- 
+
+
 
 
 
