@@ -245,63 +245,64 @@ eraseVarFun m = let (nm, q) = foldl (\(nm,nq) (n,(ldec,q)) -> (Map.insert n ldec
 -- It creates the tree of dependencies of variables and finds their type.
 
 data UniqueId = UnId Int | World
+  deriving (Ord,Eq)
 
 ui_inc :: UniqueId -> UniqueId
 ui_inc (UnId x) = UnId (x+1)
 
--- CaseR UniqueId is used so as to get the result of the Case application, mostly for the cases that it is an LDefaultCase or LConstCase 
-data OperInfo = Con UniqueId Name Int Int | SApp UniqueId Name Int | LzApp UniqueId Name Int | OLet UniqueId Name | CaseCon UniqueId Name Int [Name] | PrimOp UniqueId PrimFn Int | OLForce UniqueId
+-- CaseR  is used so as to get the result of the Case application, mostly for the cases that it is an LDefaultCase or LConstCase 
+data OperInfo = Con  Name Int Int | SApp  Name Int | LzApp  Name Int | OLet  Name | CaseCon  Name Int [Name] | PrimOp  PrimFn Int | OLForce 
 
-data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId) | CaseR UniqueId
+data VarRel = Leaf (OperInfo, Const) | Edge (OperInfo, Name) | EdgeR (OperInfo, UniqueId) | CaseR
 
-data FunCall = Fun Name [VarRel] | FunCase Name UniqueId [[VarRel]]
+data FunCall = Fun Name [(UniqueId,VarRel)] | FunCase Name UniqueId [[(UniqueId,VarRel)]]
 
 
-findVarel :: UniqueId -> LExp -> (([VarRel],UniqueId),[LExp])
+findVarel :: UniqueId -> LExp -> (([(UniqueId,VarRel)],UniqueId),[LExp])
 findVarel un (LApp j1 vr lexps) = case (vr) of
                                LV (Glob n) -> fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
-                                                                            LV (Glob nl) -> (((ns ++ [Edge (SApp un n p,nl)],unl),rls), p+1)
-                                                                            LConst c     -> (((ns ++ [Leaf (SApp un n p,c)], unl),rls), p+1)
+                                                                            LV (Glob nl) -> (((ns ++ [(un,Edge (SApp n p,nl))],unl),rls), p+1)
+                                                                            LConst c     -> (((ns ++ [(un,Leaf (SApp n p,c))], unl),rls), p+1)
                                                                             LNothing     -> (((ns,unl),rls),p+1)
                                                                             _            -> let ((res,nun),nrls) = findVarel unl lexp    -- The order of execution here is important for EdgeR (un+1)
-                                                                                            in (((ns ++ [EdgeR (SApp un n p,ui_inc unl )] ++ res,nun),nrls ++ rls), p+1)   ) ((([],ui_inc un),[]),0) lexps
+                                                                                            in (((ns ++ [(un,EdgeR (SApp n p,ui_inc unl ))] ++ res,nun),nrls ++ rls), p+1)   ) ((([],ui_inc un),[]),0) lexps
                                _           -> (([],un),[])  -- ?
 findVarel un (LLazyApp n lexps) = fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
-                                                                            LV (Glob nl) -> (((ns ++ [Edge (LzApp un n p,nl)],unl),rls), p+1)
-                                                                            LConst c     -> (((ns ++ [Leaf (LzApp un n p,c)], unl),rls), p+1)
+                                                                            LV (Glob nl) -> (((ns ++ [(un,Edge (LzApp n p,nl))],unl),rls), p+1)
+                                                                            LConst c     -> (((ns ++ [(un,Leaf (LzApp n p,c))], unl),rls), p+1)
                                                                             LNothing     -> (((ns,unl),rls),p+1)
                                                                             _            -> let ((res,nun),nrls) = findVarel unl lexp
-                                                                                            in (((ns ++ [EdgeR (LzApp un n p,ui_inc unl)] ++ res,nun),rls ++ nrls), p+1)   ) ((([],ui_inc un),[]),0) lexps
+                                                                                            in (((ns ++ [(un,EdgeR (LzApp n p,ui_inc unl))] ++ res,nun),rls ++ nrls), p+1)   ) ((([],ui_inc un),[]),0) lexps
 findVarel un (LForce lexp) = case (lexp) of
-                                 LV (Glob nl) -> (([Edge (OLForce un,nl)],ui_inc un),[])
-                                 LConst c     -> (([Leaf (OLForce un,c)], ui_inc un),[])
+                                 LV (Glob nl) -> (([(un,Edge (OLForce ,nl))],ui_inc un),[])
+                                 LConst c     -> (([(un,Leaf (OLForce ,c))], ui_inc un),[])
                                  _            -> let ((res,nun),nrls) = findVarel (ui_inc un) lexp 
-                                                 in (( EdgeR (OLForce un, ui_inc un) : res,nun),nrls)
+                                                 in (( (un, EdgeR (OLForce , ui_inc un)) : res,nun),nrls)
 findVarel un (LLet j1 lexp1 lexp2)  = let ((r1,nun1),rls1) = case (lexp1) of
-                                                               LV (Glob nl) -> (([Edge (OLet un j1,nl)],ui_inc un),[])
-                                                               LConst c     -> (([Leaf (OLet un j1,c)], ui_inc un),[])
+                                                               LV (Glob nl) -> (([(un,Edge (OLet j1,nl))],ui_inc un),[])
+                                                               LConst c     -> (([(un,Leaf (OLet j1,c))], ui_inc un),[])
                                                                _            -> let ((res,nun),nrls) = findVarel (ui_inc un) lexp1 
-                                                                               in (( EdgeR (OLet un j1, ui_inc un) : res,nun),nrls)
+                                                                               in (( (un,EdgeR (OLet j1, ui_inc un)) : res,nun),nrls)
                                       in let ((r2,nun2),rls2) =  findVarel nun1 lexp2
                                          in ((r1 ++ r2,nun2),rls1 ++ rls2)
 findVarel un (LProj lexp j1)               = findVarel un lexp   -- What is Projection? probably lexp is a constructor.
 findVarel un (LCon j1 tag n lexps)  = fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
-                                                                        LV (Glob nl) -> (((ns ++ [Edge (Con un n tag p,nl)],unl),rls),p+1)
-                                                                        LConst c     -> (((ns ++ [Leaf (Con un n tag p,c)], unl),rls),p+1)
+                                                                        LV (Glob nl) -> (((ns ++ [(un,Edge (Con n tag p,nl))],unl),rls),p+1)
+                                                                        LConst c     -> (((ns ++ [(un,Leaf (Con n tag p,c))], unl),rls),p+1)
                                                                         LNothing     -> (((ns,unl),rls),p+1)
                                                                         _            -> let ((res,nun),nrls) = findVarel unl lexp 
-                                                                                        in (((ns ++ [EdgeR (Con nun n tag p, ui_inc unl)] ++ res,nun),nrls ++ rls),p+1)   ) ((([],ui_inc un),[]),0) lexps
+                                                                                        in (((ns ++ [(un,EdgeR (Con n tag p, ui_inc unl))] ++ res,nun),nrls ++ rls),p+1)   ) ((([],ui_inc un),[]),0) lexps
 findVarel un (LCase j1 lexp lalts) = let ((r',nun'),rls') = findVarel (ui_inc un) lexp
-                                     in let ((r,nun),rls) = ((r' ++ [CaseR un] ,nun'),rls' ++ [LCase j1 lexp lalts])
+                                     in let ((r,nun),rls) = ((r' ++ [(un,CaseR)] ,nun'),rls' ++ [LCase j1 lexp lalts])
                                         in foldl (\((ns,unl),rls) x -> case (x) of 
                                                                      LDefaultCase _        -> ((ns,unl),rls)
                                                                      LConstCase _ _        -> ((ns,unl),rls)
-                                        	                     LConCase tag nm args clexp  -> ((ns ++ [EdgeR (CaseCon un nm tag args,ui_inc un)],unl),rls) ) ((r,nun),rls) lalts
+                                        	                     LConCase tag nm args clexp  -> ((ns ++ [(un,EdgeR (CaseCon nm tag args,ui_inc un))],unl),rls) ) ((r,nun),rls) lalts
 findVarel un (LOp j1 lexps) = fst $ foldl (\(((ns,unl),rls),p) lexp -> case (lexp) of
-                                                                          LV (Glob nl) -> (((ns ++ [Edge (PrimOp un j1 p,nl)],unl),rls), p+1)
-                                                                          LConst c     -> (((ns ++ [Leaf (PrimOp un j1 p,c)], unl),rls), p+1)
+                                                                          LV (Glob nl) -> (((ns ++ [(un,Edge (PrimOp j1 p,nl))],unl),rls), p+1)
+                                                                          LConst c     -> (((ns ++ [(un,Leaf (PrimOp j1 p,c))], unl),rls), p+1)
                                                                           _            -> let ((res,nun),nrls) = findVarel unl lexp -- The order of execution here is important for EdgeR (un+1)
-                                                                                          in (((ns ++ [EdgeR (PrimOp un j1 p,ui_inc unl )] ++ res,nun),nrls ++ rls), p+1)   ) ((([],ui_inc un),[]),0) lexps
+                                                                                          in (((ns ++ [(un,EdgeR (PrimOp j1 p,ui_inc unl ))] ++ res,nun),nrls ++ rls), p+1)   ) ((([],ui_inc un),[]),0) lexps
 findVarel un (LForeign fd1 fd2 fds) = foldl (\((ns,unl),rls) x -> let ((res,nun),nrls) = findVarel unl (snd x) 
                                                                    in ((ns ++ res,nun),nrls ++ rls)  ) (([],un),[]) fds 
 findVarel un _ = (([],un),[])
@@ -347,40 +348,42 @@ namesToPositions m = Map.foldlWithKey (\nm k ldecl -> case (ldecl) of
 
 -- Find all variables that are constructed through OLet or CasseCon, we will use this to construct the data flow graph.
 
-findBindings :: [FunCall] -> Map (Name,Name) VarRel
+findBindings :: [FunCall] -> Map (Name,Name) (UniqueId,VarRel)
 findBindings (fc : fcs) = let (n,vrl) = case (fc) of
                                   Fun n' vrl' -> (n,vrl')
                                   FunCase n' ui vrls' -> (n', foldl (\nl el -> nl ++ el) [] vrls')
                           in Map.unions [(iterVarRel Map.empty n vrl), (findBindings fcs)]  where
-                              iterVarRel m n  (x : xs) = let nm = case (x) of
-                                                               Leaf (OLet _ ln, _) -> Map.insert (n,ln) x m
-                                                               Edge (OLet _ ln, _) -> Map.insert (n,ln) x m
-                                                               EdgeR (OLet _ ln, _) -> Map.insert (n,ln) x m
-                                                               Leaf (CaseCon _ _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) x nm) m lns
-                                                               Edge (CaseCon _ _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) x nm) m lns
-                                                               EdgeR (CaseCon _ _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) x nm) m lns
-                                                               _     -> m
-                                                         in iterVarRel nm n xs
+                              iterVarRel m n  ((ui,x) : xs) = let nm = case (x) of
+                                                                         Leaf (OLet ln, _) -> Map.insert (n,ln) (ui,x) m
+                                                                         Edge (OLet ln, _) -> Map.insert (n,ln) (ui,x) m
+                                                                         EdgeR (OLet ln, _) -> Map.insert (n,ln) (ui,x) m
+                                                                         Leaf (CaseCon _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) (ui,x) nm) m lns
+                                                                         Edge (CaseCon _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) (ui,x) nm) m lns
+                                                                         EdgeR (CaseCon _ _ lns, _) -> foldl (\nm ln -> Map.insert (n,ln) (ui,x) nm) m lns
+                                                                         _     -> m
+                                                              in iterVarRel nm n xs
                               iterVarRel m n [] = m
 findBindings []  = Map.empty
                                  
 
 ------------
--- A node in the graph data flow in which the context is saved into the node itself.
+-- A node in the graph data flow in which the context is saved into the node itself. The Int in the FunCase represents the case that it is part of.
 
-data GNode = GFun Name VarRel | GFunCase Name UniqueId VarRel
+data GNode = GFun Name VarRel | GFunCase Name UniqueId Int VarRel
 
--- createDataFlowGraph :: [FunCall] -> Map (Name,UniqueId) GNode
--- createDataFlowGraph ((Fun n vrls) : xs) = Map.union [createDataFlowGraph xs, flatten n vrls ] where
---                                             flatten n (v : vs) =case (v) of
---                                                  Con ui _ _ _ -> (GFun n v)
---                                                  SApp ui _ _ ->
---                                                  LzApp ui _ _ ->
---                                                  OLet ui _ _ ->
---                                                  CaseCon ui _ _ _ ->
---                                                  PrimOp ui _ _ ->
---                                                  OLForce ui ->
--- 
+createDataFlowMap :: [FunCall] -> Map Name (Map UniqueId [GNode])
+createDataFlowMap ((Fun n vrls) : xs) = Map.insert n (flatten n vrls) (createDataFlowMap xs) where
+                                            flatten n ((ui,v) : vs) = Map.insertWith (\a b -> a ++ b) ui [GFun n v] (flatten n vs)
+                                            flatten n [] = Map.empty
+createDataFlowMap ((FunCase n cui vrlss) : xs) = Map.insert n (Map.unions $ fst ( foldl (\(xs,p) vrls ->  (xs ++ [flatten n p vrls], p + 1) ) ([],0) vrlss )) (createDataFlowMap xs) where
+                                                       flatten n p ((ui,v) : vs) = Map.insertWith (\a b -> a ++ b) ui [GFunCase n cui p v] (flatten n p vs)
+                                                       flatten n p [] = Map.empty
+
+createDataFlowMap [] = Map.empty
+
+
+
+
 
 
 
